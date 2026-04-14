@@ -1,21 +1,18 @@
-# Rocket-PPA: A Multi-Corner, Longitudinal PPA Dataset for ML-Driven EDA
+# Rocket-PPA & Vexii-PPA: A Multi-Core, Multi-Corner PPA Dataset for ML-Driven EDA
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-**Rocket-PPA** is a comprehensive dataset designed to bridge the chasm between micro-architectural definition and physical sign-off in Electronic Design Automation (EDA). By providing high-fidelity, industrial-grade physical design data across a wide frequency spectrum and multiple PVT corners, this dataset addresses the critical data scarcity bottleneck in ML-for-EDA research.
+**Rocket-PPA** (now featuring the **VexiiRiscv** dataset) is a comprehensive, large-scale dataset designed to bridge the chasm between micro-architectural definition and physical sign-off in Electronic Design Automation (EDA). By providing high-fidelity, industrial-grade physical design data across two distinct processor families, a wide frequency spectrum, and multiple PVT corners, this repository addresses the critical data scarcity bottleneck in ML-for-EDA research.
 
 This repository is maintained by the **MICS Lab at HKUST(GZ)**.
----
-## Update 
-
-Add VexiiRiscv processors's PPA result.
 
 ---
 
 ## 🚀 Key Features
 
-* **Industrial-Grade Fidelity:** Generated using the Chisel-based RISC-V Rocket Chip generator and implemented through a complete RTL-to-GDSII flow using Synopsys Fusion Compiler on a commercial **TSMC 6nm** technology node.
-* **Multi-Corner Variability:** Goes beyond nominal conditions by providing data across three crucial PVT corners (**Typical, Fast, Slow**), enabling the development of robust, corner-aware Unified Conditional Models.
+* **Micro-Architectural Diversity:** Overcomes the "single-generator" limitation by providing data across two fundamentally different CPU generation paradigms: the Chisel-based **Rocket Chip** and the highly configurable, Scala-based **VexiiRiscv** pipeline framework.
+* **Industrial-Grade Fidelity:** Implemented through a complete RTL-to-GDSII flow using Synopsys Fusion Compiler on a commercial **TSMC 6nm** technology node.
+* **Multi-Corner Variability:** Goes beyond nominal conditions by providing data across three crucial PVT corners (**Typical, Fast, Slow**), enabling the development of robust, corner-aware generalization models.
 * **Longitudinal "Glass-Box" Visibility:** Captures PPA metrics not just at sign-off, but at **5 distinct physical design stages**, enabling research into early-stage proxy modeling and multi-fidelity prediction.
 * **Dynamic Frequency Scaling:** Sweeps target frequencies from **100MHz to 4GHz**, capturing the non-linear "Zero-Slack Cliff" and exponential power scaling dynamics inherent in aggressive timing closure.
 
@@ -23,15 +20,17 @@ Add VexiiRiscv processors's PPA result.
 
 ## 📊 Dataset Composition
 
-The dataset contains **800 unique micro-architectural configurations**. Because the 3 PVT corners are flattened into columns, the dataset conceptually covers **2,400 logical evaluation points** (800 configs $\times$ 3 corners).
+The repository consists of two major sub-datasets, significantly boosting the scale and external validity of downstream ML tasks. Because the 3 PVT corners are flattened into columns, each configuration yields 3 logical evaluation points.
 
+### 1. The Rocket Chip Subset
+* **Total Count:** 200 unique micro-architectural configurations.
+* **Architectural Features (12 cols):** Core structural parameters natively exposed by the Rocket generator (e.g., `nBTBEntries`, `nICacheWays`, `nDCacheSets`).
 
+### 2. The VexiiRiscv Subset *(New!)*
+* **Total Count:** 200 unique micro-architectural configurations.
+* **Architectural Features (36 cols):** Provides a significantly richer and higher-dimensional feature space, exposing fine-grained pipeline and execution unit parameters unique to the VexiiRiscv architecture.
 
-### 1. Input Features
-* **Architectural Parameters (12 columns):** Integer variables defining the core structure (e.g., `nBTBEntries`, `nICacheWays`, `nDCacheSets`).
-* **Physical Constraints (1 column):** Target `Frequency` in MHz.
-
-### 2. Target Labels (Naming Convention)
+### Target Labels (Naming Convention for Both Subsets)
 The CSV headers follow a structured format `<Stage>_[Corner]_<Metric>` to record longitudinal data:
 
 * **Corner-Invariant Metrics (Area):** Formatted as `<Stage>_Total_Area` ($\mu m^2$). Since physical geometry is constant across PVT conditions, Area columns are shared.
@@ -46,7 +45,7 @@ The CSV headers follow a structured format `<Stage>_[Corner]_<Metric>` to record
 
 ## 🛠️ Usage & Preprocessing Guidelines
 
-Based on our exploratory data analysis, we highly recommend the following preprocessing steps when training machine learning models (e.g., XGBoost, Random Forest, or Neural Networks) on this dataset:
+Based on our exploratory data analysis, we highly recommend the following preprocessing steps when training machine learning models (e.g., XGBoost, Random Forest, or Neural Networks) on these datasets:
 
 ### Power & Area (Log-Normal Distributions)
 Power and Area metrics span multiple orders of magnitude. We recommend applying a **Logarithmic Transformation** (`log(1+x)`) followed by Standard Scaling before optimization using standard MSE loss.
@@ -59,10 +58,8 @@ Timing prediction is highly non-linear. EDA tools optimize violating paths aggre
 
 ## 💻 Quick Start
 
-Clone the repository and load the dataset using Pandas:
+Clone the repository and load the datasets using Pandas:
 
 ```bash
 git clone [https://github.com/HKUSTGZ-MICS-LYU/KDD-RocketPPA-Dataset.git](https://github.com/HKUSTGZ-MICS-LYU/KDD-RocketPPA-Dataset.git)
 cd KDD-RocketPPA-Dataset
-
-
