@@ -5,6 +5,10 @@
 **Rocket-PPA** is a comprehensive dataset designed to bridge the chasm between micro-architectural definition and physical sign-off in Electronic Design Automation (EDA). By providing high-fidelity, industrial-grade physical design data across a wide frequency spectrum and multiple PVT corners, this dataset addresses the critical data scarcity bottleneck in ML-for-EDA research.
 
 This repository is maintained by the **MICS Lab at HKUST(GZ)**.
+---
+## Update 
+
+Add VexiiRiscv processors's PPA result.
 
 ---
 
@@ -60,3 +64,5 @@ Clone the repository and load the dataset using Pandas:
 ```bash
 git clone [https://github.com/HKUSTGZ-MICS-LYU/KDD-RocketPPA-Dataset.git](https://github.com/HKUSTGZ-MICS-LYU/KDD-RocketPPA-Dataset.git)
 cd KDD-RocketPPA-Dataset
+
+
