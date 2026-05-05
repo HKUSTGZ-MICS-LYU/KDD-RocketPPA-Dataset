@@ -1,0 +1,48 @@
+# Default: ignore everything in this repository.
+*
+
+# Keep git metadata helpers.
+!.gitignore
+!LICENSE
+!README.md
+
+# Keep the dataset itself.
+!RocketChipPPAResult/
+!RocketChipPPAResult/**
+!VexiiRiscvPPAResult/
+!VexiiRiscvPPAResult/**
+!RocketChipGDSII/
+!RocketChipGDSII/**
+!VexiiRiscvGDSII/
+!VexiiRiscvGDSII/**
+
+# Keep RTL code as part of the dataset release.
+!RocketChipRTLCode/
+!RocketChipRTLCode/**
+!VexiiRiscvRTLCode/
+!VexiiRiscvRTLCode/**
+
+# Ignore analysis, paper writing, and baseline outputs.
+baseline/*
+!baseline/
+!baseline/baseline.py
+dataset_analysis/
+*.tex
+*.pdf
+*.svg
+*.png
+*.json
+*.md
+
+# Ignore local scripts and generated helpers.
+dataset_composition_and_schema.py
+exploratory_data_analysis.py
+merge_rocket_csv.py
+
+# Ignore editor and Python cache files.
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.swo
+.DS_Store

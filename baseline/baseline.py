@@ -1,226 +1,288 @@
-import pandas as pd
-import numpy as np
-import xgboost as xgb
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import r2_score, mean_absolute_percentage_error
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
+#!/usr/bin/env python3
+"""Run baseline experiments for final-stage PPA prediction."""
 
-# ==========================================
-# 1. Data Loading & Preprocessing
-# ==========================================
-def load_and_process_data():
-    # 1. Define the list of file names
-    files = [
-        "../PPAResult/Rocket_Dataset_100M.csv",
-        "../PPAResult/Rocket_Dataset_800M.csv",
-        "../PPAResult/Rocket_Dataset_1600M.csv",
-        "../PPAResult/Rocket_Dataset_4000M.csv"
-    ]
-    
-    dfs = []
-    print(">>> Starting data loading...")
-    for f in files:
-        if os.path.exists(f):
-            try:
-                # Read CSV
-                df = pd.read_csv(f)
-                
-                # If there is no Frequency column in the CSV, add it based on the file name (optional)
-                if 'Frequency' not in df.columns:
-                    if '100M' in f: df['Frequency'] = 100
-                    elif '800M' in f: df['Frequency'] = 800
-                    elif '1600M' in f: df['Frequency'] = 1600
-                    elif '4000M' in f: df['Frequency'] = 4000
-                
-                dfs.append(df)
-                print(f"    Successfully loaded: {f} (Shape: {df.shape})")
-            except Exception as e:
-                print(f"    Failed to load {f}: {e}")
-        else:
-            print(f"    Warning: File does not exist {f}")
-    
-    if not dfs:
-        raise ValueError("No data loaded! Please check if these CSV files exist in the current directory.")
-        
-    full_df = pd.concat(dfs, ignore_index=True)
-    
-    # 2. Critical Step: Assign Design_ID (for leak-free splitting)
-    # We identify the "same design" based on a combination of 12 architectural parameters
-    arch_features = [
-        'nRAS', 'nBTBEntries', 'nBHTEntries', 'nICacheSets', 
-        'nICacheWays', 'nICacheTLBWays', 'MulDivUnroll', 
-        'useVM', 'nDCacheSets', 'nDCacheWays', 
-        'nDCacheTLBWays', 'nMSHRs'
-    ]
-    
-    # Check if columns exist
-    missing_cols = [c for c in arch_features if c not in full_df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing architectural parameter columns in CSV: {missing_cols}")
+from __future__ import annotations
 
-    print(">>> Generating Design ID for dataset splitting...")
-    # Generate unique Design_ID by grouping architectural parameters
-    full_df['Design_ID'] = full_df.groupby(arch_features).ngroup()
-    
-    n_designs = full_df['Design_ID'].nunique()
-    print(f"    Total data size: {len(full_df)}")
-    print(f"    Unique Designs: {n_designs}")
-    
-    # 3. Ensure Corner feature is included
-    # If Corner in your data is a string (e.g., 'TT', 'SS'), it needs to be converted to a numeric ID
-    if 'Corner_ID' not in full_df.columns:
-        # Try to find the Corner column
-        possible_corner_cols = [c for c in full_df.columns if 'corner' in c.lower()]
-        if possible_corner_cols:
-            col = possible_corner_cols[0]
-            print(f"    Detected Corner column: {col}, encoding as Corner_ID...")
-            full_df['Corner_ID'] = full_df[col].astype('category').cat.codes
-        else:
-            # If there is no Corner column at all, assume the data is single Corner or the user needs to handle it manually
-            print("    Note: 'Corner_ID' column not found. If this is multi-corner data, please ensure there is a column identifying the Corner.")
-            # To prevent code errors, if it's single Corner data, set to 0
-            full_df['Corner_ID'] = 0
+import argparse
+import csv
+import json
+import math
+import statistics
+from pathlib import Path
+from typing import Dict, List, Tuple
 
-    return full_df.dropna().reset_index(drop=True)
 
-# ==========================================
-# 2. Dataset Splitting Strategy (Split by Design ID)
-# ==========================================
-def split_by_design(df, train_ratio=0.56, val_ratio=0.14):
-    """
-    Split by Design_ID to ensure all Frequency/Corner data of the same design do not cross sets.
-    """
-    unique_ids = df['Design_ID'].unique()
-    np.random.seed(42)
-    np.random.shuffle(unique_ids)
-    
-    n_total = len(unique_ids)
-    n_train = int(n_total * train_ratio)
-    n_val = int(n_total * val_ratio)
-    
-    train_ids = unique_ids[:n_train]
-    val_ids = unique_ids[n_train:n_train+n_val]
-    test_ids = unique_ids[n_train+n_val:]
-    
-    print(f"\n>>> Dataset splitting statistics:")
-    print(f"    Train Designs: {len(train_ids)}")
-    print(f"    Val   Designs: {len(val_ids)}")
-    print(f"    Test  Designs: {len(test_ids)}")
-    
-    df_train = df[df['Design_ID'].isin(train_ids)].copy()
-    df_val = df[df['Design_ID'].isin(val_ids)].copy()
-    df_test = df[df['Design_ID'].isin(test_ids)].copy()
-    
-    return df_train, df_val, df_test
-
-# ==========================================
-# 3. Main Training Pipeline
-# ==========================================
-# Load data
-try:
-    df_full = load_and_process_data()
-except ValueError as e:
-    print(f"Error: {e}")
-    exit()
-
-# Split data
-df_train, df_val, df_test = split_by_design(df_full)
-
-# Combine Train and Val for final training (for better performance), or you can keep Val for hyperparameter tuning
-# Here we follow common practice: train with as much data as possible before evaluating on Test
-X_train_full = pd.concat([df_train, df_val])
-y_train_full = pd.concat([df_train, df_val]) # y needs to be fetched dynamically based on the target
-
-# Define features (ensure they match CSV column names)
-features = [
-    'nRAS', 'nBTBEntries', 'nBHTEntries', 'nICacheSets', 
-    'nICacheWays', 'nICacheTLBWays', 'MulDivUnroll', 
-    'useVM', 'nDCacheSets', 'nDCacheWays', 
-    'nDCacheTLBWays', 'nMSHRs', 'Frequency', 
-    'Corner_ID'  # Key feature for the unified model
-]
-
-# Define targets (please modify here according to the actual column names in your CSV!)
-# Example column names: 'chipfinish_Total_Area', 'chipfinish_Typical_Total_Power(nW)'
-# If your column names are different, please modify the dictionary values here
-targets = {
-    'Area': 'chipfinish_Total_Area',
-    'Power': 'chipfinish_Typical_Total_Power(nW)',
-    'WNS': 'chipfinish_FUNC_Typical_(Setup)_WNS'
+DATASET_SPECS = {
+    "RocketChip": {
+        "csv": "RocketChipPPAResult/RocketChip_PPA_Data.csv",
+        "arch_features": [
+            "nRAS", "nBTBEntries", "nBHTEntries", "nICacheSets", "nICacheWays", "nICacheTLBWays",
+            "MulDivUnroll", "useVM", "nDCacheSets", "nDCacheWays", "nDCacheTLBWays", "nMSHRs", "Frequency",
+        ],
+        "stage_features": [
+            "floorplan_Total_Area", "placement_Total_Area", "cts_Total_Area", "route_Total_Area",
+            "floorplan_Typical_Total_Power(nW)", "placement_Typical_Total_Power(nW)",
+            "cts_Typical_Total_Power(nW)", "route_Typical_Total_Power(nW)",
+            "floorplan_FUNC_Typical_(Setup)_WNS", "placement_FUNC_Typical_(Setup)_WNS",
+            "cts_FUNC_Typical_(Setup)_WNS", "route_FUNC_Typical_(Setup)_WNS",
+        ],
+        "targets": {
+            "Area": ("chipfinish_Total_Area", "log"),
+            "Power": ("chipfinish_Typical_Total_Power(nW)", "log"),
+            "WNS": ("chipfinish_FUNC_Typical_(Setup)_WNS", "raw"),
+        },
+    },
+    "VexiiRiscv": {
+        "csv": "VexiiRiscvPPAResult/VexiiRiscv_PPA_Data.csv",
+        "arch_features": [
+            "xlen", "decoders", "lanes", "decoder-at", "dispatcher-at", "relaxed-branch", "relaxed-shift",
+            "relaxed-btb", "with-mul", "with-div", "with-rvc", "with-aligner-buffer", "with-dispatcher-buffer",
+            "with-gshare", "with-btb", "with-ras", "with-late-alu", "btb-sets", "btb-hash-width",
+            "regfile-async", "allow-bypass-from", "fetch-l1", "lsu-l1", "fetch-l1-sets", "fetch-l1-ways",
+            "fetch-l1-mem-data-width-min", "fetch-reduced-bank", "lsu-l1-sets", "lsu-l1-ways",
+            "lsu-l1-store-buffer-slots", "lsu-l1-store-buffer-ops", "lsu-l1-refill-count",
+            "lsu-l1-writeback-count", "with-lsu-bypass", "with-iterative-shift", "div-radix", "div-ipc", "Frequency",
+        ],
+        "stage_features": [
+            "floorplan_Cell_Area", "placement_Cell_Area", "cts_Cell_Area", "route_Cell_Area",
+            "floorplan_Typical_Power", "placement_Typical_Power", "cts_Typical_Power", "route_Typical_Power",
+            "floorplan_Typical_WNS", "placement_Typical_WNS", "cts_Typical_WNS", "route_Typical_WNS",
+        ],
+        "targets": {
+            "Area": ("chipfinish_Cell_Area", "log"),
+            "Power": ("chipfinish_Typical_Power", "log"),
+            "WNS": ("chipfinish_Typical_WNS", "raw"),
+        },
+    },
 }
 
-metrics_log = []
-sns.set_style("whitegrid")
-sns.set_context("paper", font_scale=1.4)
 
-for metric_name, col_name in targets.items():
-    if col_name not in df_full.columns:
-        print(f"Skipping {metric_name}: Column name '{col_name}' not found in CSV.")
-        continue
+def parse_args() -> argparse.Namespace:
+    repo_root = Path(__file__).resolve().parent.parent
+    parser = argparse.ArgumentParser(description="Run baseline benchmark experiments.")
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=repo_root,
+        help="Repository root.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=repo_root / "baseline",
+        help="Directory for experiment outputs.",
+    )
+    return parser.parse_args()
 
-    print(f"\n>>> Training target: {metric_name} ...")
-    
-    # Prepare X, y
-    X_train = X_train_full[features]
-    y_train = X_train_full[col_name]
-    
-    X_test = df_test[features]
-    y_test = df_test[col_name]
-    
-    # --- Model 1: Random Forest ---
-    rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-    rf.fit(X_train, y_train)
-    rf_pred = rf.predict(X_test)
-    
-    rf_r2 = r2_score(y_test, rf_pred)
-    rf_mape = mean_absolute_percentage_error(y_test, rf_pred)
-    metrics_log.append(f"Model: RF | Target: {metric_name} | R2: {rf_r2:.4f} | MAPE: {rf_mape:.4%}")
-    
-    # Plot RF
-    plt.figure(figsize=(6, 6))
-    # Color by Corner_ID to observe predictions across different corners
-    sns.scatterplot(x=y_test, y=rf_pred, hue=X_test['Corner_ID'], palette='viridis', alpha=0.6)
-    min_v, max_v = min(y_test.min(), rf_pred.min()), max(y_test.max(), rf_pred.max())
-    plt.plot([min_v, max_v], [min_v, max_v], 'r--', lw=2, label='Ideal')
-    plt.title(f'Random Forest: {metric_name}\n($R^2={rf_r2:.3f}$)', fontweight='bold')
-    plt.xlabel('Actual')
-    plt.ylabel('Predicted')
-    plt.legend(title='Corner')
-    plt.tight_layout()
-    plt.savefig(f"RF_{metric_name}_RealData.png", dpi=300)
-    plt.close()
 
-    # --- Model 2: XGBoost ---
-    xg = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=6, n_jobs=-1, random_state=42)
-    xg.fit(X_train, y_train)
-    xg_pred = xg.predict(X_test)
-    
-    xg_r2 = r2_score(y_test, xg_pred)
-    xg_mape = mean_absolute_percentage_error(y_test, xg_pred)
-    metrics_log.append(f"Model: XGB | Target: {metric_name} | R2: {xg_r2:.4f} | MAPE: {xg_mape:.4%}")
-    metrics_log.append("-" * 30)
-    
-    # Plot XGB
-    plt.figure(figsize=(6, 6))
-    sns.scatterplot(x=y_test, y=xg_pred, hue=X_test['Corner_ID'], palette='viridis', alpha=0.6)
-    plt.plot([min_v, max_v], [min_v, max_v], 'r--', lw=2, label='Ideal')
-    plt.title(f'XGBoost: {metric_name}\n($R^2={xg_r2:.3f}$)', fontweight='bold')
-    plt.xlabel('Actual')
-    plt.ylabel('Predicted')
-    plt.legend(title='Corner')
-    plt.tight_layout()
-    plt.savefig(f"XGB_{metric_name}_RealData.png", dpi=300)
-    plt.close()
+def read_rows(path: Path) -> List[Dict[str, str]]:
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
 
-# Save metrics
-with open('metrics_real_data.txt', 'w') as f:
-    f.write("\n".join(metrics_log))
 
-print("\n>>> All done!")
-print("    Images saved: RF_*.png, XGB_*.png")
-print("    Metrics saved: metrics_real_data.txt")
-print("    Metrics preview:")
-for line in metrics_log:
-    print("    " + line)
+def parse_scalar(value: str) -> float:
+    try:
+        return float(value)
+    except ValueError:
+        digits = "".join(ch for ch in value if (ch.isdigit() or ch == "."))
+        if digits:
+            return float(digits)
+        raise
+
+
+def group_by_design(rows: List[Dict[str, str]]) -> Dict[str, List[Dict[str, str]]]:
+    grouped: Dict[str, List[Dict[str, str]]] = {}
+    for row in rows:
+        grouped.setdefault(row["Design"], []).append(row)
+    return grouped
+
+
+def split_designs(design_ids: List[str]) -> Tuple[List[str], List[str], List[str]]:
+    ordered = sorted(design_ids)
+    train = ordered[:112]
+    val = ordered[112:140]
+    test = ordered[140:]
+    return train, val, test
+
+
+def filter_complete_rows(rows: List[Dict[str, str]], feature_cols: List[str], target_col: str) -> List[Dict[str, str]]:
+    required = feature_cols + [target_col]
+    return [row for row in rows if all(row.get(col, "") != "" for col in required)]
+
+
+def rows_for_designs(rows: List[Dict[str, str]], design_ids: List[str]) -> List[Dict[str, str]]:
+    keep = set(design_ids)
+    return [row for row in rows if row["Design"] in keep]
+
+
+def build_matrix(rows: List[Dict[str, str]], feature_cols: List[str], target_col: str, target_mode: str) -> Tuple[List[List[float]], List[float]]:
+    x = [[parse_scalar(row[col]) for col in feature_cols] for row in rows]
+    y = []
+    for row in rows:
+        value = parse_scalar(row[target_col])
+        y.append(math.log1p(value) if target_mode == "log" else value)
+    return x, y
+
+
+def standardize_fit(x: List[List[float]]) -> Tuple[List[float], List[float]]:
+    cols = list(zip(*x))
+    means = [statistics.fmean(col) for col in cols]
+    stds = []
+    for col, mean in zip(cols, means):
+        var = statistics.fmean((value - mean) ** 2 for value in col)
+        stds.append(math.sqrt(var) if var > 0 else 1.0)
+    return means, stds
+
+
+def standardize_apply(x: List[List[float]], means: List[float], stds: List[float]) -> List[List[float]]:
+    return [[(value - mean) / std for value, mean, std in zip(row, means, stds)] for row in x]
+
+
+def add_bias(x: List[List[float]]) -> List[List[float]]:
+    return [[1.0] + row for row in x]
+
+
+def transpose(x: List[List[float]]) -> List[List[float]]:
+    return [list(col) for col in zip(*x)]
+
+
+def matmul(a: List[List[float]], b: List[List[float]]) -> List[List[float]]:
+    b_t = transpose(b)
+    return [[sum(ai * bj for ai, bj in zip(row, col)) for col in b_t] for row in a]
+
+
+def identity(n: int) -> List[List[float]]:
+    return [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+
+
+def inverse(matrix: List[List[float]]) -> List[List[float]]:
+    n = len(matrix)
+    aug = [row[:] + eye_row[:] for row, eye_row in zip(matrix, identity(n))]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(aug[r][col]))
+        if abs(aug[pivot][col]) < 1e-12:
+            raise ValueError("Matrix is singular and cannot be inverted.")
+        aug[col], aug[pivot] = aug[pivot], aug[col]
+        pivot_val = aug[col][col]
+        aug[col] = [value / pivot_val for value in aug[col]]
+        for row in range(n):
+            if row == col:
+                continue
+            factor = aug[row][col]
+            aug[row] = [rv - factor * cv for rv, cv in zip(aug[row], aug[col])]
+    return [row[n:] for row in aug]
+
+
+def ridge_regression_fit(x: List[List[float]], y: List[float], alpha: float = 1e-6) -> List[float]:
+    x_bias = add_bias(x)
+    xt = transpose(x_bias)
+    xtx = matmul(xt, x_bias)
+    for i in range(len(xtx)):
+        xtx[i][i] += alpha
+    xtx_inv = inverse(xtx)
+    y_col = [[value] for value in y]
+    xty = matmul(xt, y_col)
+    weights = matmul(xtx_inv, xty)
+    return [row[0] for row in weights]
+
+
+def predict(x: List[List[float]], weights: List[float]) -> List[float]:
+    x_bias = add_bias(x)
+    return [sum(w * v for w, v in zip(weights, row)) for row in x_bias]
+
+
+def invert_target_transform(values: List[float], mode: str) -> List[float]:
+    if mode == "log":
+        return [math.expm1(value) for value in values]
+    return values[:]
+
+
+def mae(y_true: List[float], y_pred: List[float]) -> float:
+    return statistics.fmean(abs(a - b) for a, b in zip(y_true, y_pred))
+
+
+def rmse(y_true: List[float], y_pred: List[float]) -> float:
+    return math.sqrt(statistics.fmean((a - b) ** 2 for a, b in zip(y_true, y_pred)))
+
+
+def r2_score(y_true: List[float], y_pred: List[float]) -> float:
+    y_mean = statistics.fmean(y_true)
+    ss_res = sum((a - b) ** 2 for a, b in zip(y_true, y_pred))
+    ss_tot = sum((a - y_mean) ** 2 for a in y_true)
+    return 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+
+def run_one_setting(rows: List[Dict[str, str]], train_ids: List[str], val_ids: List[str], test_ids: List[str],
+                    feature_cols: List[str], target_col: str, target_mode: str) -> Dict[str, float]:
+    filtered = filter_complete_rows(rows, feature_cols, target_col)
+    train_rows = rows_for_designs(filtered, train_ids)
+    val_rows = rows_for_designs(filtered, val_ids)
+    test_rows = rows_for_designs(filtered, test_ids)
+
+    train_val_rows = train_rows + val_rows
+    x_train, y_train = build_matrix(train_val_rows, feature_cols, target_col, target_mode)
+    x_test, y_test = build_matrix(test_rows, feature_cols, target_col, target_mode)
+
+    means, stds = standardize_fit(x_train)
+    x_train_std = standardize_apply(x_train, means, stds)
+    x_test_std = standardize_apply(x_test, means, stds)
+
+    weights = ridge_regression_fit(x_train_std, y_train)
+    y_pred = predict(x_test_std, weights)
+
+    y_true_eval = invert_target_transform(y_test, target_mode)
+    y_pred_eval = invert_target_transform(y_pred, target_mode)
+
+    return {
+        "train_samples": len(train_rows),
+        "val_samples": len(val_rows),
+        "test_samples": len(test_rows),
+        "feature_count": len(feature_cols),
+        "mae": mae(y_true_eval, y_pred_eval),
+        "rmse": rmse(y_true_eval, y_pred_eval),
+        "r2": r2_score(y_true_eval, y_pred_eval),
+    }
+
+
+def main() -> None:
+    args = parse_args()
+    repo_root = args.repo_root.resolve()
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    results = {"datasets": {}}
+    for dataset_name, spec in DATASET_SPECS.items():
+        rows = read_rows(repo_root / spec["csv"])
+        design_ids = sorted(group_by_design(rows).keys())
+        train_ids, val_ids, test_ids = split_designs(design_ids)
+        results["datasets"][dataset_name] = {
+            "split": {
+                "train_designs": len(train_ids),
+                "val_designs": len(val_ids),
+                "test_designs": len(test_ids),
+            },
+            "targets": {},
+        }
+        setups = {
+            "ArchOnly": spec["arch_features"],
+            "ArchPlusBackendStage": spec["arch_features"] + spec["stage_features"],
+        }
+        for target_name, (target_col, target_mode) in spec["targets"].items():
+            results["datasets"][dataset_name]["targets"][target_name] = {
+                "target_column": target_col,
+                "target_mode": target_mode,
+                "setups": {},
+            }
+            for setup_name, feature_cols in setups.items():
+                results["datasets"][dataset_name]["targets"][target_name]["setups"][setup_name] = run_one_setting(
+                    rows, train_ids, val_ids, test_ids, feature_cols, target_col, target_mode
+                )
+
+    with (output_dir / "baseline_results.json").open("w", encoding="utf-8") as handle:
+        json.dump(results, handle, indent=2)
+
+    print(f"Results written to: {output_dir / 'baseline_results.json'}")
+
+
+if __name__ == "__main__":
+    main()

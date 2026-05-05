@@ -1,73 +1,182 @@
-# Rocket-PPA & Vexii-PPA: A Multi-Core, Multi-Corner PPA Dataset for ML-Driven EDA
+# MLCAD Multimodal Processor PPA Dataset
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+## Overview
 
-**Rocket-PPA** (now featuring the **VexiiRiscv** dataset) is a comprehensive, large-scale dataset designed to bridge the chasm between micro-architectural definition and physical sign-off in Electronic Design Automation (EDA). By providing high-fidelity, industrial-grade physical design data across two distinct processor families, a wide frequency spectrum, and multiple PVT corners, this repository addresses the critical data scarcity bottleneck in ML-for-EDA research.
+This repository releases a multimodal processor PPA dataset for ML-driven EDA. The dataset covers two processor families:
 
-This repository is maintained by the **MICS Lab at HKUST(GZ)**.
+- `RocketChip`
+- `VexiiRiscv`
 
----
+For each family, the release includes three aligned modalities:
 
-## 🚀 Key Features
+- tabular backend PPA annotations
+- GDSII-derived images
+- generated RTL code
 
-* **Micro-Architectural Diversity:** Overcomes the "single-generator" limitation by providing data across two fundamentally different CPU generation paradigms: the Chisel-based **Rocket Chip** and the highly configurable, Scala-based **VexiiRiscv** pipeline framework.
-* **Industrial-Grade Fidelity:** Implemented through a complete RTL-to-GDSII flow using Synopsys Fusion Compiler on a commercial **TSMC 6nm** technology node.
-* **Multi-Corner Variability:** Goes beyond nominal conditions by providing data across three crucial PVT corners (**Typical, Fast, Slow**), enabling the development of robust, corner-aware generalization models.
-* **Longitudinal "Glass-Box" Visibility:** Captures PPA metrics not just at sign-off, but at **5 distinct physical design stages**, enabling research into early-stage proxy modeling and multi-fidelity prediction.
-* **Dynamic Frequency Scaling:** Sweeps target frequencies from **100MHz to 4GHz**, capturing the non-linear "Zero-Slack Cliff" and exponential power scaling dynamics inherent in aggressive timing closure.
+The dataset is intended to support research on final-stage PPA prediction, backend-stage-aware learning, cross-family generalization, and multimodal modeling over architecture, backend signals, and layout geometry.
 
----
+## Released Contents
 
-## 📊 Dataset Composition
+According to the current release policy, the repository keeps the following dataset files:
 
-The repository consists of two major sub-datasets, significantly boosting the scale and external validity of downstream ML tasks. Because the 3 PVT corners are flattened into columns, each configuration yields 3 logical evaluation points.
+- `RocketChipPPAResult/`
+- `VexiiRiscvPPAResult/`
+- `RocketChipGDSII/`
+- `VexiiRiscvGDSII/`
+- `RocketChipRTLCode/`
+- `VexiiRiscvRTLCode/`
+- `baseline/baseline.py`
+- `README.md`
+- `LICENSE`
 
-### 1. The Rocket Chip Subset
+All paper writing files, analysis artifacts, generated figures, and auxiliary scripts are excluded from the dataset release.
 
-* **Total Count:** 200 unique micro-architectural configurations.
-* **Architectural Features (12 cols):** Core structural parameters natively exposed by the Rocket generator (e.g., `nBTBEntries`, `nICacheWays`, `nDCacheSets`).
+## Dataset Scale
 
-### 2. The VexiiRiscv Subset *(New!)*
+### RocketChip
 
-* **Total Count:** 200 unique micro-architectural configurations.
-* **Architectural Features (36 cols):** Provides a significantly richer and higher-dimensional feature space, exposing fine-grained pipeline and execution unit parameters unique to the VexiiRiscv architecture.
+- `200` unique designs
+- `800` tabular samples
+- frequencies: `100 MHz`, `800 MHz`, `1600 MHz`, `4000 MHz`
+- `797` paired GDSII images
+- `202` RTL files in the released directory
 
-### Target Labels (Naming Convention for Both Subsets)
+### VexiiRiscv
 
-The CSV headers follow a structured format `<Stage>_[Corner]_<Metric>` to record longitudinal data:
+- `200` unique designs
+- `600` tabular samples
+- frequencies: `100 MHz`, `400 MHz`, `800 MHz`
+- `593` paired GDSII images
+- `200` RTL files in the released directory
 
-* **Corner-Invariant Metrics (Area):** Formatted as `<Stage>_Total_Area` ($\mu m^2$). Since physical geometry is constant across PVT conditions, Area columns are shared.
-* **Corner-Dependent Metrics (Power & Timing):** Formatted as `<Stage>_<Corner>_<Metric>`.
-  * *Corners:* `Typical`, `Fast`, `Slow`.
-  * *Stages:* `floorplan`, `place_opt` (Placement), `clock_opt` (CTS), `route_opt` (Routing), `chipfinish` (Sign-off).
-  * *Metrics:* `Total_Power` (mW) and `WNS` (ns, Worst Negative Slack).
+### Combined
 
-*Example:* `chipfinish_Total_Area` (invariant) vs. `chipfinish_Typical_Total_Power` (corner-specific).
+- `400` unique designs
+- `1400` tabular samples
+- `1390` paired GDSII images
 
----
+The small difference between tabular rows and paired GDSII images is caused by failed backend runs. These failed runs do not have complete final-stage annotations and therefore are excluded from the paired image branch.
 
-## 🛠️ Usage & Preprocessing Guidelines
+## Directory Structure
 
-Based on our exploratory data analysis, we highly recommend the following preprocessing steps when training machine learning models (e.g., XGBoost, Random Forest, or Neural Networks) on these datasets:
-
-### Power & Area (Log-Normal Distributions)
-
-Power and Area metrics span multiple orders of magnitude. We recommend applying a **Logarithmic Transformation** (`log(1+x)`) followed by Standard Scaling before optimization using standard MSE loss.
-
-### Timing / WNS (The "Zero-Slack Cliff")
-
-Timing prediction is highly non-linear. EDA tools optimize violating paths aggressively toward the $0.0$ ns threshold but leave loose constraints alone, creating a sharp distributional discontinuity.
-
-* **Recommendation:** Use a **Quantile Transformer** to map the raw WNS data to a Gaussian prior ($\mathcal{N}(0,1)$). Furthermore, utilizing **L1 Loss (MAE)** rather than MSE provides more stable gradients near the critical zero-slack boundary.
-
----
-
-## 💻 Quick Start
-
-Clone the repository and load the datasets using Pandas:
-
-```bash
-git clone [https://github.com/HKUSTGZ-MICS-LYU/KDD-RocketPPA-Dataset.git](https://github.com/HKUSTGZ-MICS-LYU/KDD-RocketPPA-Dataset.git)
-cd KDD-RocketPPA-Dataset
+```text
+MLCAD/
+├── RocketChipPPAResult/
+│   └── RocketChip_PPA_Data.csv
+├── VexiiRiscvPPAResult/
+│   └── VexiiRiscv_PPA_Data.csv
+├── RocketChipGDSII/
+│   └── *.png
+├── VexiiRiscvGDSII/
+│   └── *.png
+├── RocketChipRTLCode/
+│   └── *.sv
+├── VexiiRiscvRTLCode/
+│   └── *.v
+└── baseline/
+    └── baseline.py
 ```
+
+## Tabular PPA Annotations
+
+### RocketChip
+
+The RocketChip CSV contains:
+
+- `12` architecture feature columns
+- `1` frequency column
+- `35` target columns
+
+Representative architecture features include:
+
+- `nBTBEntries`
+- `nICacheWays`
+- `nDCacheSets`
+- `MulDivUnroll`
+
+### VexiiRiscv
+
+The VexiiRiscv CSV contains:
+
+- `37` architecture feature columns
+- `1` frequency column
+- `35` target columns
+
+Representative architecture features include:
+
+- `xlen`
+- `decoders`
+- `lanes`
+- `with-mul`
+- `with-div`
+- `btb-sets`
+
+### Shared Target Schema
+
+Both processor families use aligned backend supervision:
+
+- backend stages: `floorplan`, `placement`, `cts`, `route`, `chipfinish`
+- PVT corners for power and timing: `Fast`, `Typical`, `Slow`
+- target groups:
+  - area
+  - power
+  - WNS
+
+Each processor family provides:
+
+- `5` area labels
+- `15` power labels
+- `15` WNS labels
+
+for a total of `35` target columns.
+
+## GDSII Image Modality
+
+The repository distributes GDSII-derived images in rasterized `PNG` format. This design choice is made because raw GDSII files are too large for practical public release through GitHub.
+
+Each GDSII image is keyed by:
+
+- design ID
+- operating frequency
+
+and is aligned with one complete tabular backend sample.
+
+The original raw GDSII files can be released separately to researchers in a later distribution or upon request.
+
+## RTL Modality
+
+The release also includes generated RTL code:
+
+- `RocketChipRTLCode/`
+- `VexiiRiscvRTLCode/`
+
+This makes it possible to study the connection between front-end RTL structure and downstream physical-design behavior.
+
+## Example Baseline
+
+The repository keeps a lightweight example baseline in:
+
+- `baseline/baseline.py`
+
+This script runs final-stage PPA prediction experiments for RocketChip and VexiiRiscv using two settings:
+
+- `ArchOnly`
+- `ArchPlusBackendStage`
+
+and outputs benchmark results in JSON form.
+
+## Suggested Research Tasks
+
+This dataset can support:
+
+- final-stage PPA prediction from architecture parameters
+- backend-stage-aware prediction
+- cross-family generalization
+- multi-fidelity learning across backend stages
+- resource-aware backend-stage selection
+- multimodal learning with architecture, backend features, and GDSII images
+- joint RTL-to-layout representation learning
+
+## License
+
+This repository is released under the license provided in [LICENSE](LICENSE).
