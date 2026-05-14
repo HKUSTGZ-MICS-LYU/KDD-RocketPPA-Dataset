@@ -39,7 +39,7 @@ All paper writing files, analysis artifacts, generated figures, and auxiliary sc
 - `800` tabular samples
 - frequencies: `100 MHz`, `800 MHz`, `1600 MHz`, `4000 MHz`
 - `797` paired GDSII images
-- `202` RTL files in the released directory
+- `200` RTL files in the released directory
 
 ### VexiiRiscv
 
