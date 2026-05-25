@@ -30,7 +30,6 @@ dataset_analysis/
 *.tex
 *.pdf
 *.svg
-*.png
 *.json
 *.md
 
